@@ -16,43 +16,79 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # IMPORTANT: required for tags
+          fetch-depth: 0
 
       - name: Configure Git
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-      - name: Determine next version
-        id: bump
+      - name: Determine version bump type
+        id: bump_type
+        run: |
+          # Get commit messages since last tag
+          git fetch --tags
+          last_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+
+          if [ -z "$last_tag" ]; then
+            echo "bump=patch" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          commits=$(git log ${last_tag}..HEAD --pretty=format:"%s")
+
+          if echo "$commits" | grep -qE "BREAKING CHANGE|feat!:"; then
+            echo "bump=major" >> $GITHUB_OUTPUT
+          elif echo "$commits" | grep -qE "^feat:"; then
+            echo "bump=minor" >> $GITHUB_OUTPUT
+          elif echo "$commits" | grep -qE "^fix:"; then
+            echo "bump=patch" >> $GITHUB_OUTPUT
+          else
+            echo "bump=patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Calculate next version
+        id: version
         run: |
           git fetch --tags
-
-          # Get latest valid semver tag
           latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
 
           if [ -z "$latest" ]; then
-            echo "No existing tags found. Starting at v0.0.1"
             new_tag="v0.0.1"
           else
-            echo "Latest tag found: $latest"
             version=${latest#v}
             IFS='.' read -r major minor patch <<< "$version"
-            patch=$((patch + 1))
+
+            case "${{ steps.bump_type.outputs.bump }}" in
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              patch)
+                patch=$((patch + 1))
+                ;;
+            esac
+
             new_tag="v$major.$minor.$patch"
           fi
 
-          echo "New tag will be: $new_tag"
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+          echo "New version: $new_tag"
 
       - name: Create and push tag
         run: |
-          git tag ${{ steps.bump.outputs.new_tag }}
-          git push origin ${{ steps.bump.outputs.new_tag }}
+          git tag ${{ steps.version.outputs.new_tag }}
+          git push origin ${{ steps.version.outputs.new_tag }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.bump.outputs.new_tag }}
-          name: Release ${{ steps.bump.outputs.new_tag }}
-          generate_release_notes: true
+      - name: Create GitHub Release (native)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ steps.version.outputs.new_tag }} \
+            --title "Release ${{ steps.version.outputs.new_tag }}" \
+            --generate-notes
