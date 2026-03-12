@@ -87,7 +87,7 @@ jobs:
 
       - name: Create GitHub Release (native)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           gh release create ${{ steps.version.outputs.new_tag }} \
             --title "Release ${{ steps.version.outputs.new_tag }}" \
