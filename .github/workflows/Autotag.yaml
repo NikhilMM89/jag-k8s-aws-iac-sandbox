@@ -1,0 +1,94 @@
+name: Auto Version and Tag
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Determine version bump type
+        id: bump_type
+        run: |
+          # Get commit messages since last tag
+          git fetch --tags
+          last_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+
+          if [ -z "$last_tag" ]; then
+            echo "bump=patch" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          commits=$(git log ${last_tag}..HEAD --pretty=format:"%s")
+
+          if echo "$commits" | grep -qE "BREAKING CHANGE|feat!:"; then
+            echo "bump=major" >> $GITHUB_OUTPUT
+          elif echo "$commits" | grep -qE "^feat:"; then
+            echo "bump=minor" >> $GITHUB_OUTPUT
+          elif echo "$commits" | grep -qE "^fix:"; then
+            echo "bump=patch" >> $GITHUB_OUTPUT
+          else
+            echo "bump=patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Calculate next version
+        id: version
+        run: |
+          git fetch --tags
+          latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+
+          if [ -z "$latest" ]; then
+            new_tag="v0.0.1"
+          else
+            version=${latest#v}
+            IFS='.' read -r major minor patch <<< "$version"
+
+            case "${{ steps.bump_type.outputs.bump }}" in
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              patch)
+                patch=$((patch + 1))
+                ;;
+            esac
+
+            new_tag="v$major.$minor.$patch"
+          fi
+
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+          echo "New version: $new_tag"
+
+      - name: Create and push tag
+        run: |
+          git tag ${{ steps.version.outputs.new_tag }}
+          git push origin ${{ steps.version.outputs.new_tag }}
+
+      - name: Create GitHub Release (native)
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          gh release create ${{ steps.version.outputs.new_tag }} \
+            --title "Release ${{ steps.version.outputs.new_tag }}" \
+            --generate-notes

@@ -1,0 +1,34 @@
+name: Setup S3 Backend (Prerequisite)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        type: environment
+        required: true
+
+permissions: 
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap-s3:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v5.1.1
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          role-session-name: InfrastructureDeployment
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: create state bucket
+        run: |
+          aws s3api create-bucket --bucket ${{ secrets.CUS_CODE }}-terraform-state-${{ secrets.AWS_REGION }} --region ${{ secrets.AWS_REGION }} --create-bucket-configuration LocationConstraint=${{ secrets.AWS_REGION }}
+          aws s3api put-bucket-versioning --bucket ${{ secrets.CUS_CODE }}-terraform-state-${{ secrets.AWS_REGION }} --versioning-configuration Status=Enabled
